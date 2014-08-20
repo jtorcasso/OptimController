@@ -1,9 +1,10 @@
 '''controllers for optimization routines in Python'''
 
 from collections import OrderedDict
-import functools
+import functools, time
 from scipy.optimize import minimize
-from loggers import MemoryLogger, NullLogger
+from loggers import MemoryLogger, NullLogger, DiskLogger
+from numpy import isnan
 
 class SimpleMinimizer(object):
     '''interactive wrapper for scipy.optimize.minimize'''
@@ -21,7 +22,9 @@ class SimpleMinimizer(object):
 
         self.func = CriterionFunction(func, parameters, fargs, self.logger)
 
-    def log(self, mode='memory'):
+        self.runtime = 0
+
+    def log(self, mode='memory', **kwargs):
         '''log the optimization
 
         Parameters
@@ -31,12 +34,21 @@ class SimpleMinimizer(object):
         mode : str
             'memory' to log within memory, 'disk' to log on
             disk
+
+        ** Keyword Arguments **
+
+        filepath : str
+            path to filename (disk logger only)
+        tablename :str
+            name of the table to save logging results (disk logger only)
+        groupname : str
+            name of the group for hierarchical data-file (disk logger only)         
         '''
 
         if mode == 'memory':
             self.logger = MemoryLogger(self.args, self.parameters)
         elif mode == 'disk':
-            self.logger = DiskLogger(self.args, self.parameters)
+            self.logger = DiskLogger(self.args, self.parameters, **kwargs)
         elif mode == 'null':
             self.logger = NullLogger(self.args, self.parameters)
         else:
@@ -47,9 +59,12 @@ class SimpleMinimizer(object):
     def run(self):
         '''Run the optimizer given the current parameter values'''
 
+        start = time.time()
         try:
             self.results = minimize(self.func, **self.args)
+            self.runtime += time.time() - start
         except KeyboardInterrupt:
+            self.runtime += time.time() - start
             pass
 
 class CriterionFunction(object):
@@ -82,4 +97,7 @@ class CriterionFunction(object):
 
         fval = self.logger(functools.partial(self.func, *(params + self.fargs)))
 
+        if isnan(fval):
+            raise ValueError('Likelihood evaluated to null value')
+            
         return fval

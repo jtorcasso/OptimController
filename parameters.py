@@ -167,6 +167,14 @@ class ParameterArray(object):
     def value_(self):
         return np.resize([p.value_ for p in self.scalars.flat], self.scalars.shape)
 
+    @property
+    def free(self):
+        return np.resize([p.free for p in self.scalars.flat] , self.scalars.shape)
+
+    @property
+    def bounds(self):
+        return np.resize([str(p.bounds) for p in self.scalars.flat], self.scalars.shape)
+
     def set_bounds(self, min_, max_):
         '''sets bounds of parameter
         
@@ -206,12 +214,10 @@ class ParameterArray(object):
             param.update(val, source)
 
     def summary(self):
-        bounds = np.resize([str(p.bounds) for p in self.scalars.flat], self.scalars.shape)
-        free = np.resize([p.free for p in self.scalars.flat] , self.scalars.shape)
 
         string = '{}\n{}\n'.format('Value:', self.value.__str__())
-        string += '{}\n{}\n'.format('Bounds:', bounds.__str__())
-        string += '{}\n{}\n'.format('Free:', free.__str__())
+        string += '{}\n{}\n'.format('Bounds:', self.bounds.__str__())
+        string += '{}\n{}\n'.format('Free:', self.free.__str__())
         print(string)
 
     def __getitem__(self, val):
