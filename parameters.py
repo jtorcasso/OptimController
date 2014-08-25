@@ -8,6 +8,7 @@ from collections import OrderedDict
 
 # third party
 import numpy as np
+from pandas import DataFrame
 
 class ParameterBase(object):
     '''Base parameter class
@@ -151,6 +152,7 @@ class ParameterArray(object):
     
     def __init__(self, scalars):
         self.scalars = scalars
+        self.shape = scalars.shape
 
     def copy(self):
         return np.reshape([p.copy() for p in self.scalars.flat], self.scalars.shape)
@@ -301,7 +303,26 @@ class ParameterSpace(object):
         assert values.shape == (len(free),)
         
         for v,p in zip(values, free):
-            p.update(v, source)        
+            p.update(v, source)
+
+    def dump(self, filename):
+        '''dump parameters to file'''
+
+        data = []
+        index = []
+        for p in self:
+            if hasattr(p, 'shape'):
+                positions = list(itertools.product(*[range(i) for i in p.shape]))
+                for pos in positions:
+                    index.append(tuple(par.name) + pos)
+                    par = p[pos]
+                    data.append([par.value, par.free, par.bounds[0], par.bounds[1]])
+            else:
+                index.append(tuple(p.name))
+                data.append([p.value, p.free, p.bounds[0], p.bounds[1]])
+
+        df = DataFrame(data, index=index, columns=['value', 'free', 'min', 'max'])
+        df.to_csv(filename)
                 
     def __getitem__(self, name):
         return self.params[name]
