@@ -3,7 +3,7 @@
 from __future__ import print_function, division
 
 # standard library
-import itertools
+import itertools, re
 from collections import OrderedDict
 
 # third party
@@ -17,8 +17,7 @@ class ParameterBase(object):
     
     '''
     
-    def __init__(self, value, name):
-        self.name = name
+    def __init__(self, value):
         self.value = value
         self.value_ = value
     
@@ -61,8 +60,8 @@ class ParameterScalar(ParameterBase):
         whether parameter is free to vary
     '''
     
-    def __init__(self, value, name, free=True, bounds=(-np.inf, np.inf)):
-        ParameterBase.__init__(self, value, name)
+    def __init__(self, value, free=True, bounds=(-np.inf, np.inf)):
+        ParameterBase.__init__(self, value)
         self.free = free
         self.set_bounds(*bounds)
 
@@ -141,8 +140,7 @@ class ParameterScalar(ParameterBase):
     def summary(self):
         '''print summary of the parameter'''
         
-        string = '{:<10}{}\n'.format('Name:', self.name)
-        string += '{:<10}{}\n'.format('Value:', self.value)
+        string = '{:<10}{}\n'.format('Value:', self.value)
         string += '{:<10}{}\n'.format('Bounds:', self.bounds)
         string += '{:<10}{}\n'.format('Free:', self.free)
         print(string)
@@ -255,10 +253,16 @@ class ParameterSpace(object):
 
     def flatten(self, freeonly=False):
         pspace = ParameterSpace()
-        if freeonly:
-            pspace.params = OrderedDict([(p.name, p) for p in self.flat if p.free])
-        else:
-            pspace.params = OrderedDict([(p.name, p) for p in self.flat])
+
+        for name,p in self.params.items():
+            if hasattr(p, 'shape'):
+                positions = list(itertools.product(*[range(i) for i in p.shape]))
+                for pos in positions:
+                    if p[pos].free | (not freeonly):
+                        pspace.params.update({tuple(name) + pos:p[pos]})
+            elif p.free | (not freeonly):
+                pspace.params.update({tuple(name):p})
+
         return pspace
 
     def add_parameter(self, value, name):
@@ -271,17 +275,19 @@ class ParameterSpace(object):
         name : str
             name given to parameter
         '''
-        
+        search = re.compile(r'[^a-zA-Z0-9.]').search
+
+        if search(name):
+            raise ValueError('name must contain only letters a-z and digits 0-9')
         if name in self.params:
             raise KeyError('Parameter with name {} already exists'.format(name))
         
         if isinstance(value, np.ndarray):
             positions = list(itertools.product(*[range(i) for i in value.shape]))
-            names = ['{}[{}]'.format(name, ','.join([str(i) for i in p])) for p in positions]
             self.params.update({name:ParameterArray(np.reshape(
-                [ParameterScalar(p, names[i]) for i,p in enumerate(value.flat)], value.shape))})
+                [ParameterScalar(p) for p in value.flat], value.shape))})
         elif isinstance(value, (int, long, float, np.float, np.int)):
-            self.params.update({name:ParameterScalar(value, name)})
+            self.params.update({name:ParameterScalar(value)})
         else:
             raise ValueError('parameter value of unsupported type')
         
@@ -305,25 +311,48 @@ class ParameterSpace(object):
         for v,p in zip(values, free):
             p.update(v, source)
 
-    def dump(self, filename):
-        '''dump parameters to file'''
+    def to_csv(self, filepath, freeonly=False):
+        '''dump parameters to csv file'''
 
-        data = []
-        index = []
-        for p in self:
-            if hasattr(p, 'shape'):
-                positions = list(itertools.product(*[range(i) for i in p.shape]))
-                for pos in positions:
-                    index.append(tuple(par.name) + pos)
-                    par = p[pos]
-                    data.append([par.value, par.free, par.bounds[0], par.bounds[1]])
-            else:
-                index.append(tuple(p.name))
-                data.append([p.value, p.free, p.bounds[0], p.bounds[1]])
+        flat = self.flatten(freeonly=freeonly)
+        index = [name for name in flat.params.keys()]
+        data = [[p.value, p.free, p.bounds[0], p.bounds[1]] for p in flat]
 
         df = DataFrame(data, index=index, columns=['value', 'free', 'min', 'max'])
-        df.to_csv(filename)
-                
+        df.to_csv(filepath, index_label='id')
+    
+    def from_csv(self, filepath):
+        '''load parameters from csv file'''
+
+        data = DataFrame.from_csv(filepath)
+        ids = [[r.strip() for r in row[0][1:-1].split(',') if r!=''] for row in data.iterrows()]
+        ids = [[v[1:-1] if i==0 else int(v) for i,v in enumerate(id_)] for id_ in ids]
+        blocks = OrderedDict({ids[0][0]:[ids[0]]})
+        for id_ in ids[1:]:
+            if id_[0] in blocks:
+                blocks[id_[0]].append(id_)
+            else:
+                blocks[id_[0]] = [id_]
+
+        for name, ids in blocks.items():
+
+            if len(ids) == 1:
+                value, free, min_, max_ = data.loc[str(tuple(ids[0]))]
+                self.params.update({name:ParameterScalar(value, free, (min_, max_))})
+
+            else:
+                shape = tuple([max([id_[j] for id_ in ids])+1 for j in xrange(1, len(ids[0]))])
+                params = np.zeros(shape).astype('object')
+                for id_ in ids:
+                    value, free, min_, max_ = data.loc[str(tuple(id_))]
+                    params[tuple(id_[1:])] = (ParameterScalar(value, free, (min_, max_)))
+
+                for pos in itertools.product(*[range(i) for i in shape]):
+                    if not isinstance(params[pos], ParameterScalar):
+                        raise ValueError('parameter declaration incomplete at loc {}'.format(pos))
+
+                self.params.update({name:ParameterArray(params)})
+
     def __getitem__(self, name):
         return self.params[name]
 
@@ -334,7 +363,8 @@ class ParameterSpace(object):
         return len(self.params)
 
     def summary(self):
-        for p in self:
+        for name, p in self.params.items():
+            print("{} = \n".format(name))
             p.summary()
     
     def __str__(self):

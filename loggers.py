@@ -46,7 +46,7 @@ class MemoryLogger(NullLogger):
 	def initialize_storage(self):
 		return pd.DataFrame(
 			columns=['method', 'tol', 'fval', 'seconds'] + \
-			[p.name for p in self.parameters.flatten()])
+			[str(n) for n in self.parameters.flatten().params])
 
 	def store(self, fval, seconds):
 		'''store information from function evaluation to memory'''
@@ -80,7 +80,7 @@ class DiskLogger(NullLogger):
 		hfile = tables.open_file(self.filepath, 'a')
 
 		dt = dtype([('method', 'S40'), ('tol', float), ('fval', float),
-			('seconds', float)] + [(p.name, float) for p in self.parameters.flatten()])
+			('seconds', float)] + [(str(n), float) for n in self.parameters.flatten().params])
 
 		return hfile.createTable('/{}'.format(self.groupname), self.tablename, dt, 
 			createparents=True)
