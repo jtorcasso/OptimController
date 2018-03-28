@@ -1,2 +1,2 @@
-from parameters import ParameterSpace
-from controls import SimpleMinimizer
+from .parameters import ParameterSpace
+from .controls import SimpleMinimizer

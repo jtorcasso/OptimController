@@ -3,7 +3,7 @@
 from collections import OrderedDict
 import functools, time
 from scipy.optimize import minimize
-from loggers import MemoryLogger, NullLogger, DiskLogger
+from .loggers import MemoryLogger, NullLogger, DiskLogger
 from numpy import isnan
 
 class SimpleMinimizer(object):

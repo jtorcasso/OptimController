@@ -1,3 +1,4 @@
+from __future__ import division, print_function
 import pandas as pd
 from numpy import inf, dtype
 import time
@@ -27,7 +28,7 @@ class NullLogger(object):
 		pass
 
 	def store(self, fval, seconds):
-		print 'Value: {} Time: {}'.format(fval, seconds)
+		print('Value: {} Time: {}'.format(fval, seconds))
 
 	def __call__(self, func):
 
