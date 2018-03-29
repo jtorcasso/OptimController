@@ -1,4 +1,12 @@
-'''containers for parameters used in optimization'''
+'''containers for parameters used in optimization
+
+TO DO
+-----
+1. from_csv probably needs to be updated to reflect new option to add
+properties to parameters, e.g., at the moment, only the symmetric property.
+2. Add a property to keep matrices positive definite using cholesky
+decomposition?
+'''
 
 from __future__ import print_function, division
 
@@ -9,6 +17,41 @@ from collections import OrderedDict
 # third party
 import numpy as np
 from pandas import DataFrame
+
+def symmetric_to_upper(X):
+    '''convert matrix to a flattened array of elements in upper triangle
+    
+    Parameters
+    ----------
+    X : array
+        symmetric matrix
+    Returns
+    -------
+    x : array
+        1-d array of upper triangular elements
+    '''
+    x = X[np.triu_indices(X.shape[0])]
+    return x
+
+def upper_to_symmetric(x):
+    '''convert upper triangular elements to symmetric matrix
+    
+    Parameters
+    ----------
+    x : array
+        1-d array of upper triangular elements
+    Returns
+    -------
+    X : array
+        symmetric matrix
+    '''
+    elements = len(x)
+    size = int((-1 + np.sqrt(1 + 8*elements))/2)
+    X = np.empty((size, size), dtype=x.dtype)
+    indices = np.triu_indices(size)
+    X[indices] = x
+    X[(indices[1], indices[0])] = x
+    return X
 
 class ParameterBase(object):
     '''Base parameter class
@@ -123,7 +166,8 @@ class ParameterScalar(ParameterBase):
         value : numeric type
             value to update with
         source : str
-            'external' to update with an unconstrained value,
+            'external' to update with an unconstrained value, i.e., transforms
+            input to value consistent with the model
             'internal' to update with a constrained value
         '''
 
@@ -148,12 +192,40 @@ class ParameterScalar(ParameterBase):
 class ParameterArray(object):
     '''class to contain array of parameters'''
     
-    def __init__(self, scalars):
-        self.scalars = scalars
+    def __init__(self, scalars, symmetric=False):
+        if symmetric:
+            self.scalars = symmetric_to_upper(scalars)
+        else:
+            self.scalars = scalars.flatten()
         self.shape = scalars.shape
+        self.symmetric = symmetric
 
-    def copy(self):
-        return np.reshape([p.copy() for p in self.scalars.flat], self.scalars.shape)
+    def unflatten(self):
+        if self.symmetric:
+            return upper_to_symmetric(self.scalars)
+        else:
+            return np.reshape(self.scalars, self.shape)
+
+    def triu(self, k=0):
+        '''return upper triangle'''
+        if self.shape[0] != self.shape[1]:
+            raise ValueError('array is not symmetric')
+        p = self.unflatten()
+        return ParameterArray(p[np.triu_indices(p.shape[0], k=k)])
+
+    def tril(self, k=0):
+        '''return lower triangle'''
+        if self.shape[0] != self.shape[1]:
+            raise ValueError('array is not symmetric')
+        p = self.unflatten()
+        return ParameterArray(p[np.tril_indices(p.shape[0], k=k)])
+
+    def diag(self):
+        '''return diagonal'''
+        if self.shape[0] != self.shape[1]:
+            raise ValueError('array is not symmetric')
+        p = self.unflatten()
+        return ParameterArray(np.diagonal(p))
 
     @property
     def flat(self):
@@ -161,19 +233,52 @@ class ParameterArray(object):
 
     @property
     def value(self):
-        return np.resize([p.value for p in self.scalars.flat], self.scalars.shape)
+        if self.symmetric:
+            return upper_to_symmetric(np.array([p.value for p in self.scalars.flat]))
+        return np.resize([p.value for p in self.scalars.flat], self.shape)
     
     @property
     def value_(self):
-        return np.resize([p.value_ for p in self.scalars.flat], self.scalars.shape)
+        if self.symmetric:
+            return upper_to_symmetric(np.array([p.value_ for p in self.scalars.flat]))
+        return np.resize([p.value_ for p in self.scalars.flat], self.shape)
 
     @property
     def free(self):
-        return np.resize([p.free for p in self.scalars.flat] , self.scalars.shape)
+        if self.symmetric:
+            return upper_to_symmetric(np.array([p.free for p in self.scalars.flat]))
+        return np.resize([p.free for p in self.scalars.flat] , self.shape)
 
     @property
     def bounds(self):
-        return np.resize([str(p.bounds) for p in self.scalars.flat], self.scalars.shape)
+        if self.symmetric:
+            return upper_to_symmetric(np.array([str(p.bounds) for p in self.scalars.flat]))
+        return np.resize([str(p.bounds) for p in self.scalars.flat], self.shape)
+
+    @property
+    def positions(self):
+        '''list of row-column positions of element in flattened array'''
+        if self.symmetric:
+            return list(zip(*np.triu_indices(self.shape[0])))
+        return list(itertools.product(*[range(i) for i in self.shape]))
+
+    def _conform_input(self, val):
+        if isinstance(val, (int, float, np.int, np.float, bool)):
+            return np.resize(val, self.scalars.size)
+        elif val.ndim == 2:
+            if val.shape != self.shape:
+                raise ValueError('value not same shape as parameter array')
+            if self.symmetric & (not (val.T == val).all()):
+                raise ValueError('value is not symmetric')
+            if self.symmetric:
+                return symmetric_to_upper(val)
+        elif val.ndim == 1:
+            if val.shape !=  self.scalars.shape:
+                raise ValueError('value is not conformable to parameter array, check shape')
+        else:
+            raise ValueError('value is not conformable to parameter array')
+
+        return val.flatten()
 
     def set_bounds(self, min_, max_):
         '''sets bounds of parameter
@@ -185,8 +290,8 @@ class ParameterArray(object):
         max_ : numeric or numeric array
             maximum bound for each parameter in array
         '''
-        min_ = np.resize(min_, self.scalars.size)
-        max_ = np.resize(max_, self.scalars.size)
+        min_ = self._conform_input(min_)
+        max_ = self._conform_input(max_)
 
         for i,param in enumerate(self.scalars.flat):
             param.set_bounds(min_[i], max_[i])
@@ -201,16 +306,16 @@ class ParameterArray(object):
             True to free parameter
         '''
 
-        bool_like = np.resize(bool_like, self.scalars.size)
+        bool_like = self._conform_input(bool_like)
 
-        for i,param in enumerate(self.scalars.flatten()):
+        for i,param in enumerate(self.scalars.flat):
             param.set_free(bool_like[i])
 
     def update(self, values, source='external'):
 
-        values = np.resize(values, self.scalars.size)
+        values = self._conform_input(values)
 
-        for param, val in zip(self.scalars.flatten(), values):
+        for param, val in zip(self.scalars.flat, values):
             param.update(val, source)
 
     def summary(self):
@@ -221,13 +326,21 @@ class ParameterArray(object):
         print(string)
 
     def __getitem__(self, val):
-        scalars = self.scalars[val]
+        scalars = self.unflatten()[val]
         if isinstance(scalars, ParameterScalar):
             return scalars
-        return ParameterArray(scalars)
+        symmetric = False
+        if isinstance(val, slice) & (val == slice(None, None, None)) & self.symmetric:
+            symmetric = True
+        elif isinstance(val, tuple):
+            if isinstance(val[0], int) | isinstance(val[1], int):
+                pass
+            elif (val[0] == val[1]) & self.symmetric:
+                symmetric = True
+        return ParameterArray(scalars, symmetric)
 
     def __len__(self):
-        return len(self.scalars)
+        return self.shape[0]
         
     def __str__(self):
         return self.value.__str__()
@@ -242,11 +355,6 @@ class ParameterSpace(object):
     def __init__(self):
         self.params = OrderedDict()
 
-    def copy(self):
-        pspace = ParameterSpace()
-        pspace.params = OrderedDict([(n, p.copy()) for n, p in self.params.items()])
-        return pspace
-
     @property
     def flat(self):
         return itertools.chain(*(p.flat for p in self))
@@ -256,16 +364,15 @@ class ParameterSpace(object):
 
         for name,p in self.params.items():
             if hasattr(p, 'shape'):
-                positions = list(itertools.product(*[range(i) for i in p.shape]))
-                for pos in positions:
-                    if p[pos].free | (not freeonly):
-                        pspace.params.update({tuple(name) + pos:p[pos]})
+                for pos, p_ in zip(p.positions, p.scalars):
+                    if p_.free | (not freeonly):
+                        pspace.params.update({(name,) + pos:p_})
             elif p.free | (not freeonly):
-                pspace.params.update({tuple(name):p})
+                pspace.params.update({name:p})
 
         return pspace
 
-    def add_parameter(self, value, name):
+    def add_parameter(self, value, name, properties={}):
         '''add a parameter to the parameter space
         
         Parameters
@@ -274,7 +381,11 @@ class ParameterSpace(object):
             float, int or long, or an array of these types
         name : str
             name given to parameter
+        properties : dict
+            properties of the parameter. {'symmetric':True}
         '''
+        symmetric = False if properties.get('symmetric') is None else properties.get('symmetric')
+
         search = re.compile(r'[^a-zA-Z0-9.]').search
 
         if search(name):
@@ -283,15 +394,16 @@ class ParameterSpace(object):
             raise KeyError('Parameter with name {} already exists'.format(name))
         
         if isinstance(value, np.ndarray):
-            positions = list(itertools.product(*[range(i) for i in value.shape]))
-            self.params.update({name:ParameterArray(np.reshape(
-                [ParameterScalar(p) for p in value.flat], value.shape))})
-        elif isinstance(value, (int, long, float, np.float, np.int)):
+            if symmetric:
+                if not (value.T == value).all():
+                    raise ValueError('matrix is not symmetric')
+            parray = np.reshape([ParameterScalar(p) for p in value.flat], value.shape)
+            self.params.update({name:ParameterArray(parray, symmetric)})
+        elif isinstance(value, (int, float, np.float, np.int)):
             self.params.update({name:ParameterScalar(value)})
         else:
             raise ValueError('parameter value of unsupported type')
-        
-    
+
     def update(self, values, source='external'):
         '''updates free parameters with the new values
         
@@ -301,7 +413,8 @@ class ParameterSpace(object):
             1-d array of values to update the free parameters. Must
             be in order parameters were inserted.
         source : str
-            'external' to update with an unconstrained value,
+            'external' to update with an unconstrained value, i.e., transforms
+            input to value consistent with the model
             'internal' to update with a constrained value
         '''
 
@@ -357,7 +470,7 @@ class ParameterSpace(object):
         return self.params[name]
 
     def __iter__(self):
-        return self.params.itervalues()
+        return iter(self.params.values())
 
     def __len__(self):
         return len(self.params)

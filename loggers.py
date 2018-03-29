@@ -1,3 +1,7 @@
+'''
+TO DO:
+1. Log everything? Not just improvements in criterion function?
+'''
 from __future__ import division, print_function
 import pandas as pd
 from numpy import inf, dtype
@@ -54,11 +58,11 @@ class MemoryLogger(NullLogger):
 
 		fval_ = inf if len(self.data) == 0 else self.data['fval'].iloc[-1]
 
-		if fval < fval_:
-			values = [self.args['method'], self.args['tol'], fval, seconds] + \
-				[p.value for p in self.parameters.flatten()]
-			rslt = dict(zip(self.data.columns, values))
-			self.data = self.data.append(rslt, ignore_index=True)
+		# if fval < fval_:
+		values = [self.args['method'], self.args['tol'], fval, seconds] + \
+			[p.value for p in self.parameters.flatten()]
+		rslt = dict(zip(self.data.columns, values))
+		self.data = self.data.append(rslt, ignore_index=True)
 
 class DiskLogger(NullLogger):
 	'''disk-based logger'''

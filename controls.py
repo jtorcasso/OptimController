@@ -15,9 +15,9 @@ class SimpleMinimizer(object):
 
         self.parameters = parameters
 
-        self.args = OrderedDict([('method', kwargs.get('method', 'Powell')),
-            ('tol', kwargs.get('tol', 1e-3)), ('x0', init)])
-        
+        self.args = {'method':'Powell', 'tol':1e-3, 'x0':init} # defaults
+        self.args = {**self.args, **kwargs}
+
         self.logger = NullLogger(self.args, parameters)
 
         self.func = CriterionFunction(func, parameters, fargs, self.logger)
