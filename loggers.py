@@ -51,7 +51,7 @@ class MemoryLogger(NullLogger):
 	def initialize_storage(self):
 		return pd.DataFrame(
 			columns=['method', 'tol', 'fval', 'seconds'] + \
-			[str(n) for n in self.parameters.flatten().params])
+			[str(k) for k in self.parameters.to_dict().keys()])
 
 	def store(self, fval, seconds):
 		'''store information from function evaluation to memory'''
@@ -60,7 +60,7 @@ class MemoryLogger(NullLogger):
 
 		# if fval < fval_:
 		values = [self.args['method'], self.args['tol'], fval, seconds] + \
-			[p.value for p in self.parameters.flatten()]
+			list(self.parameters.to_dict().values())
 		rslt = dict(zip(self.data.columns, values))
 		self.data = self.data.append(rslt, ignore_index=True)
 
@@ -85,7 +85,7 @@ class DiskLogger(NullLogger):
 		hfile = tables.open_file(self.filepath, 'a')
 
 		dt = dtype([('method', 'S40'), ('tol', float), ('fval', float),
-			('seconds', float)] + [(str(n), float) for n in self.parameters.flatten().params])
+			('seconds', float)] + [(str(n), float) for n in self.parameters.to_dict()])
 
 		return hfile.createTable('/{}'.format(self.groupname), self.tablename, dt, 
 			createparents=True)
@@ -97,7 +97,7 @@ class DiskLogger(NullLogger):
 
 		if fval < fval_:
 			values = [self.args['method'], self.args['tol'], fval, seconds] + \
-				[p.value for p in self.parameters.flatten()]
+				list(self.parameters.to_dict().values())
 			self.data.append([tuple(values)])
 			self.data.flush()
 

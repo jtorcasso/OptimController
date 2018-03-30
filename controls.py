@@ -11,7 +11,7 @@ class SimpleMinimizer(object):
 
     def __init__(self, func, parameters, fargs, **kwargs):
 
-        init = [p.value_ for p in parameters.flatten(freeonly=True)]
+        init = parameters.value_
 
         self.parameters = parameters
 
