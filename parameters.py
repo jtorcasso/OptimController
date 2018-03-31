@@ -17,7 +17,7 @@ from collections import OrderedDict
 
 # third party
 import numpy as np
-from pandas import DataFrame
+from pandas import DataFrame, read_csv
 
 def symmetric_to_upper(X):
     '''convert matrix to a flattened array of elements in upper triangle
@@ -156,6 +156,7 @@ class ParameterArray(object):
         self.value = value
         self.value_ = value.flatten()
         self.shape = value.shape
+        self.size = value.size
         self.bounds = (np.resize(-np.inf, self.value_.shape), np.resize(np.inf, self.value_.shape))
         self.free = np.resize(True, self.value_.shape)
         self.to_external = lambda val: val.flatten()
@@ -208,19 +209,10 @@ class ParameterArray(object):
         print(string)
 
     def __getitem__(self, ix):
-        indices = np.indices(self.shape)
-        rows = indices[0]
-        cols = indices[1]
-        slice_rows = rows[ix]
-        slice_cols = cols[ix]
 
-        flat_indices = list(zip(rows.flatten(), cols.flatten()))
+        ix = list(np.reshape(np.arange(self.size), self.shape)[ix].flatten())
 
-        slice_indices = list(zip(slice_rows.flatten(), slice_cols.flatten()))
-
-        flat_slice_indices = [i for i,(r,c) in enumerate(flat_indices) if (r,c) in slice_indices]
-
-        return ParameterSlice(flat_slice_indices, self)
+        return ParameterSlice(ix, self)
 
     def __len__(self):
         return self.shape[0]
@@ -234,6 +226,7 @@ class ParameterSymmetricArray(object):
         self.value = value
         self.value_ = symmetric_to_upper(value)
         self.shape = value.shape
+        self.size = value.size
         self.bounds = (np.resize(-np.inf, self.value_.shape), 
                        np.resize(np.inf, self.value_.shape))
         self.free = np.resize(True, self.value_.shape)
@@ -287,15 +280,10 @@ class ParameterSymmetricArray(object):
         print(string)
 
     def __getitem__(self, ix):
-        indices = np.indices(self.shape)
-        rows = indices[0][ix]
-        cols = indices[1][ix]
 
-        full_slice_indices = list(zip(rows.flatten(), cols.flatten()))
+        ix = list(np.unique(upper_to_symmetric(np.arange(len(self.value_)))[ix].flatten()))
 
-        upper_slice_indices = [i for i,(r,c) in enumerate(zip(*np.triu_indices(self.shape[0]))) if (r,c) in full_slice_indices]
-
-        return ParameterSlice(upper_slice_indices, self)
+        return ParameterSlice(ix, self)
 
     def __len__(self):
         return self.shape[0]
@@ -309,6 +297,7 @@ class ParameterSPDArray(object):
         self.value = value
         self.value_ = np.linalg.cholesky(value)[np.tril_indices(value.shape[0])]
         self.shape = value.shape
+        self.size = value.size
         self.free = np.resize(True, self.value_.shape)
         self.to_external = lambda val: np.linalg.cholesky(val)[np.tril_indices(self.shape[0])]
 
@@ -388,6 +377,8 @@ class ParameterSpace(object):
                 ptype = "array"
         elif ptype == "scalar":
             assert isinstance(value, (int, float, np.float, np.int))
+        elif ptype == "array":
+            assert isinstance(value, np.ndarray)
         elif ptype == "symmetric":
             assert is_symmetric(value)
         elif ptype == "spd":
@@ -466,47 +457,73 @@ class ParameterSpace(object):
         return params
 
 
-    # def to_csv(self, filepath, freeonly=False):
-    #     '''dump parameters to csv file'''
+    def to_csv(self, filepath):
+        '''dump parameters to csv file'''
 
-    #     flat = self.flatten(freeonly=freeonly)
-    #     index = [name for name in flat.params.keys()]
-    #     data = [[p.value, p.free, p.bounds[0], p.bounds[1]] for p in flat]
+        rows = [['pname', 'ptype', 'pshape', 'value', 'free', 'min', 'max']]
+        for (name, p), ptype in zip(self.params.items(), self.ptypes):
+            if ptype == "scalar":
+                rows = np.vstack([rows, [[name, ptype, 'NA', p.value, p.free, p.bounds[0], p.bounds[1]]]])
+            else: 
+                N = p.value.size
+                if ptype == "array":
+                    free = p.free
+                    min_, max_ = p.bounds[0], p.bounds[1]
+                elif ptype == "spd":
+                    free = [p.free[0]]*N
+                    min_, max_ = ['NA']*N, ['NA']*N
+                else:
+                    free = upper_to_symmetric(p.free).flatten()
+                    min_ = upper_to_symmetric(p.bounds[0]).flatten()
+                    max_ = upper_to_symmetric(p.bounds[1]).flatten()
 
-    #     df = DataFrame(data, index=index, columns=['value', 'free', 'min', 'max'])
-    #     df.to_csv(filepath, index_label='id')
+                row = np.vstack([[name]*N, [ptype]*N, [str(p.shape)]*N, p.value.flatten(), free, min_, max_]).T
+                rows = np.vstack([rows, row])
+        df = DataFrame(rows)
+        df.to_csv(filepath, header=False, index=False)
     
-    # def from_csv(self, filepath):
-    #     '''load parameters from csv file'''
+    def from_csv(self, filepath):
+        '''load parameters from csv file'''
 
-    #     data = DataFrame.from_csv(filepath)
-    #     ids = [[r.strip() for r in row[0][1:-1].split(',') if r!=''] for row in data.iterrows()]
-    #     ids = [[v[1:-1] if i==0 else int(v) for i,v in enumerate(id_)] for id_ in ids]
-    #     blocks = OrderedDict({ids[0][0]:[ids[0]]})
-    #     for id_ in ids[1:]:
-    #         if id_[0] in blocks:
-    #             blocks[id_[0]].append(id_)
-    #         else:
-    #             blocks[id_[0]] = [id_]
+        df = read_csv(filepath)
+        pnames = df.pname.drop_duplicates().tolist()
 
-    #     for name, ids in blocks.items():
+        for pname in pnames:
+            ptype = df[df.pname == pname]['ptype'].iloc[0]
+            pshape = df[df.pname == pname]['pshape'].iloc[0]
+            value = df[df.pname == pname]['value'].as_matrix()
+            free = df[df.pname == pname]['free'].as_matrix()
+            min_ = df[df.pname == pname]['min'].as_matrix()
+            max_ = df[df.pname == pname]['max'].as_matrix()
 
-    #         if len(ids) == 1:
-    #             value, free, min_, max_ = data.loc[str(tuple(ids[0]))]
-    #             self.params.update({name:ParameterScalar(value, free, (min_, max_))})
+            if ptype == "scalar":
+                self.add_parameter(value[0], pname, ptype)
+                self[pname].set_free(free[0])
+                self[pname].set_bounds((min_[0], max_[0]))
+            else:
+                pshape = pshape[1:-1].split(',')
+                if pshape[1] == '':
+                    pshape = (int(pshape[0]),)
+                else:
+                    pshape = (int(pshape[0]), int(pshape[1]))
 
-    #         else:
-    #             shape = tuple([max([id_[j] for id_ in ids])+1 for j in xrange(1, len(ids[0]))])
-    #             params = np.zeros(shape).astype('object')
-    #             for id_ in ids:
-    #                 value, free, min_, max_ = data.loc[str(tuple(id_))]
-    #                 params[tuple(id_[1:])] = (ParameterScalar(value, free, (min_, max_)))
+                value = np.resize(value, pshape)
 
-    #             for pos in itertools.product(*[range(i) for i in shape]):
-    #                 if not isinstance(params[pos], ParameterScalar):
-    #                     raise ValueError('parameter declaration incomplete at loc {}'.format(pos))
+                if ptype == "spd":
+                    self.add_parameter(value, pname, ptype)
+                    self[pname].set_free(free[0])
+                elif ptype == "array":
+                    self.add_parameter(value, pname, ptype)
 
-    #             self.params.update({name:ParameterArray(params)})
+                    self[pname].free = free
+                    self[pname].bounds = (min_, max_)
+                    self[pname]._update_transform()
+                else:
+                    self[pname].free = symmetric_to_upper(np.reshape(free, pshape)).flatten()
+                    self[pname].bounds = (symmetric_to_upper(np.reshape(min_, pshape)).flatten(),
+                                        symmetric_to_upper(np.reshape(max_, pshape)).flatten())
+                    self[pname]._update_transform()
+        
 
     def __getitem__(self, name):
         return self.params[name]
